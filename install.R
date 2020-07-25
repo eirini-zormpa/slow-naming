@@ -1,7 +1,7 @@
 install.packages("rio")
 install.packages("dplyr")
 install.packages("tidyr")
-install.packages("stringr)
+install.packages("stringr")
 install.packages("ggplot2")
 install.packages("ggridges")
 install.packages("lme4")
