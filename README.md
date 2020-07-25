@@ -10,3 +10,5 @@ The `script` folder contains three scripts:
 1. a simplified script in which the behavioural dataset is created,
 2. the analysis script (which also contains the code to create the visualisations presented in the paper) and
 3. a helper script which contains the funtion to create half violins. This is copied directly from this [David Robinson gist](https://gist.github.com/dgrtwo/eb7750e74997891d7c20).
+
+All data and complete analyses can be found in the [OSF repository for this project](https://osf.io/eqzcu/).
