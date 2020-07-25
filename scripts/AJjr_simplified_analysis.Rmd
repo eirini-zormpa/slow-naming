@@ -1,0 +1,535 @@
+---
+title: "AJjr simplified analysis"
+author: "Eirini Zormpa"
+date: "7 October 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This file contains a simplified analysis of the behavioural data of the AJjr project ("Naming pictures slowly facilitates memory for their names").
+None of the eye-tracking data is analysed in this file.
+
+The general structure of this script is as follows. For each analysis:
+
+1. I fit the base model (the model reported in the article)
+2. I fit separate models with one predictor removed
+3. I run `anova` tests to get a *p*-value
+    - this is the *p*-value reported in the article
+    - this procedure gives more conservative *p*-values
+4. I use the `confint` function to get 95% confidence intervals
+  - these generally take a long time to run (a few hours for the more complicated models)
+  - note that fitting the confidence intervals for most models gives a fair amount of messages: where applicable I have noted some of these messages but not all of them.
+
+
+```{r load-packages, message = FALSE, warning = FALSE}
+## Just in case you don't have one of these packages installed
+# install.packages("rio")
+# install.packages("dplyr")
+# install.packages("tidyr")
+# install.packages("magrittr")
+# install.packages("lme4")
+# install.packages("lattice")
+# install.packages("ggplot2")
+# install.packages("ggridges")
+# install.packages("ggpubr")
+# install.packages("wesanderson")
+
+## load packages
+library(rio)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+library(lme4)
+library(lattice)
+library(ggplot2)
+library(ggridges)
+library(ggpubr)
+library(wesanderson)
+```
+
+# Import all datasets and set contrasts
+
+First I import all the datasets:
+
+- jr.all has all behavioural data: targets (regardless of whether participants hesitated etc. in trials) and foils
+- jr.targets has all the targets from the behavioural data
+- jr.punctual has the targets from the behavioural data but without any trials in which participants hesitated, uhmed, etc.
+- the Results datasets contain summaries for visualisation purposes
+
+For the `response` column, 1 = Yes, 0 = No.
+For the `correct` column, 1 = Correct, 0 = Incorrect.
+
+As noted in other scripts, the names used in the code and the article sometimes differ:
+
+- the predictor `prime condition` in the article refers to the `naming condition` in the code
+- the `backward` condition in the article refers to the `incomprehensible` condition in the code
+- the `unrelated` condition in the article refers to the `distractor` condition in the code
+
+```{r datasets, message = FALSE}
+all <- import("https://osf.io/crv6e/download", "rdata")
+targets <- import("https://osf.io/qwrsb/download", "rdata")
+punctual <- import("https://osf.io/fp9b7/download", "rdata")
+all_mem_results <- import("https://osf.io/u6mcv/download", "rdata")
+all_mem_response <- import("https://osf.io/6m5du/download", "rdata")
+punctual_lat_results <- import("https://osf.io/tx2h6/download", "rdata")
+```
+
+I then set the contrasts for each dataset:
+
+- tvf stands for target vs. foil
+- avu stands for aided vs. unaided generation, or in other words: identity condition vs. incomprehensible + distractor conditions and is intended to capture the generation effect 
+- ivd stands for incomprehensible vs. distractor conditions and is intended to capture the effect of processing time as a result of competition (or effort as we previously thought about this)
+
+```{r contrasts}
+# Probe
+all$tvf <- .5
+all[all$Probe == 'Foil',]$tvf <- -.5
+
+# Naming condition (referred to as "Prime condition in the article")
+targets$avu <- .25
+targets[targets$Naming == 'identity',]$avu <- -.5 
+
+targets$ivd <- .5
+targets[targets$Naming == 'identity',]$ivd <- 0
+targets[targets$Naming == 'incomprehensible',]$ivd <- -.5
+
+
+punctual$avu <- .25
+punctual[punctual$Naming == 'identity',]$avu <- -.5 
+
+punctual$ivd <- .5
+punctual[punctual$Naming == 'identity',]$ivd <- 0
+punctual[punctual$Naming == 'incomprehensible',]$ivd <- -.5
+
+```
+
+# Memory ~ Probe
+## Base model
+
+In this analysis we use response (0: No, 1: Yes) as the memory DV.
+The prediction here is that there will be more `Yes` responses to the targets (i.e. a positive estimate for the tvf contrast).
+
+```{r probe_response_try1}
+Probe.response.t1 <- glmer(response ~ 1 + tvf +
+                             (1 + tvf | Subject) +
+                             (1 + tvf | Item),
+                           data=all, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+summary(Probe.response.t1)
+```
+
+As expected, the tvf is significant and positive, showing a main effect of Probe: people were significantly more likely to say "Yes" to targets than to foils.
+
+The intercept shows people's response bias, which in this case has a negative sign, meaning people were more likely to say "No" across the board.
+
+This is the analysis reported in Table 1 of the article.
+
+#### No intercept model
+
+```{r probe_response_no_intercept}
+Probe.response.1 <- glmer(response ~ 0 + tvf +
+                            (1 + tvf|Subject) +
+                            (1 + tvf|Item),
+                          data=all, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(Probe.response.1, Probe.response.t1)
+```
+
+#### No probe
+
+```{r probe_response_no_probe}
+Probe.response.2 <- glmer(response ~ 1 + tvf - tvf +
+                            (1+tvf|Subject) +
+                            (1+tvf|Item),
+                          data=all, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(Probe.response.2, Probe.response.t1)
+```
+
+### Confidence intervals
+
+I copy the output here because these can take a while to run (thogh the model here is very simple so the CIs are calculated pretty quickly)
+
+```{r probe_CIs}
+confint(Probe.response.t1, method = "profile")
+```
+
+                  2.5 %      97.5 %
+.sig01       0.42669276  0.59462144
+.sig02      -0.01276803  0.45036384
+.sig03       0.97061930  1.30935629
+.sig04       0.71123157  1.09093712
+.sig05      -0.50285700  0.07297339
+.sig06       1.25474435  1.97623347
+(Intercept) -1.22591452 -0.69642716
+tvf          3.43792921  4.41836289
+
+# Memory ~ Naming condition
+
+This is my PRIMARY analysis. It looks at the effect of a) generation through the avu (aided vs. unaided; identity vs. incomperehensible & distractor) contrast and b) processing time (previously effort) through the ivd (incomprehensible vs. distractor) contrast.
+
+## Base model
+This (Nam_cond.t3) is the model I report in the article (Table 2) and that I use for all subsequent comparisons.
+Models with more complicated random effects structure either did not converge or gave a `singular fit` warning.
+
+```{r nam_cond_try3}
+Nam_cond.t3 <- glmer(response ~ 1 + avu + ivd +
+                       (1 + avu | Subject) +
+                       (1 + avu | Item),
+                     data=targets, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+summary(Nam_cond.t3)
+```
+
+Again, the interpretation is quite straightforward:
+
+  - the intercept is very significant and very positive meaning that participants were overall very accurate (because I only have targets in this dataset, `Yes` responses are also **correct** responses)
+  - the `avu` contrast is significant and positive showing a significant generation effect (Contasts: incomprehensible/distractor = .25, identity = -.5). This means that items in the incomprehensible and distractor conditions were more accurately recognised than items in the identity condition.
+  - the `ivd` contrast is not significant, meaning no reliable effect of processing time is observed here. Note that the estimate is positive and therefore in the predicted direction (better memory for the condition with more competition (incomprehensible = -.5, distractor = .5))
+
+## No intercept model
+
+```{r nam_cond_no_intercept}
+Nam_cond.1 <- glmer(response ~ 0 + avu + ivd +
+                      (1 + avu | Subject) +
+                      (1 + avu | Item),
+                    data=targets, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(Nam_cond.1, Nam_cond.t3)
+```
+
+
+## No generation model
+
+```{r nam_cond_no_generation}
+Nam_cond.2 <- glmer(response ~ 1 + avu + ivd - avu +
+                      (1 + avu | Subject) +
+                      (1 + avu | Item),
+                    data=targets, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(Nam_cond.2, Nam_cond.t3)
+```
+
+## No processing time model
+
+```{r nam_cond_no_effort}
+Nam_cond.3 <- glmer(response ~ 1 + avu + ivd - ivd +
+                      (1 + avu | Subject) +
+                      (1 + avu | Item),
+                    data=targets, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(Nam_cond.3, Nam_cond.t3)
+```
+
+
+## Confidence intervals
+
+```{r nam_cond_CIs}
+confint(Nam_cond.t3, method = "profile")
+```
+Warning messages (many): "unexpected decrease in profile: using minstep", "Last two rows have identical or NA .zeta values: using minstep"
+
+               2.5 %    97.5 %
+.sig01       0.75858866 0.9857542
+.sig02       0.04356387 1.0000000
+.sig03       0.14627065 0.9251113
+.sig04       0.85174645 1.3213198
+.sig05      -0.40346893 0.3995437
+.sig06       0.57819126 1.1428600
+(Intercept)  0.72527474 1.3690644
+avu          0.13261345 0.7747092
+ivd         -0.03770434 0.2907655
+
+## Plot
+
+this is the code for Figure 1 of the article
+
+```{r memory_by_condition_plot_datasets}
+fah <- all_mem_response %>%
+  filter(MemResponse == "hit" | MemResponse == "fa") %>%
+  rename(Response_rate = MemCount)
+
+fahResults <- all_mem_results %>%
+  filter(MemResponse == "hit" | MemResponse == "fa") %>%
+  rename(Response_rate = MemCount)
+```
+
+```{r rename_primes}
+fah$Naming <- factor(fah$Naming,
+labels = c("Identity", "Backward", "Unrelated", "Foil"))
+
+fahResults$Naming <- factor(fahResults$Naming,
+labels = c("Identity", "Backward", "Unrelated", "Foil")) 
+```
+
+
+```{r flat_violin}
+# source: https://gist.github.com/dgrtwo/eb7750e74997891d7c20
+
+source("geom_flat_violin.R")
+```
+
+```{r memory_by_condition_plot_raincloud1, warning=FALSE}
+
+ggplot() +
+  geom_flat_violin(aes(x=Naming, y=Response_rate, fill=Naming), position = position_nudge(x = .2, y = 0), linetype = 1, size=0.1, data = fah) +
+  geom_point(aes(x=Naming, y=Response_rate), position = position_nudge(x = 0.25), data = fahResults) +
+  geom_point(aes(x=Naming, y= Response_rate, colour = Naming), position = position_jitter(width = .15), size = .5, alpha = 0.8, data = fah) +
+  geom_linerange(aes(x=Naming, y= Response_rate, ymin=Response_rate-ci, ymax=Response_rate+ci, group = Naming), position = position_nudge(x = 0.25), data = fahResults) +
+  guides(fill = FALSE) +
+  guides(color = FALSE) +
+  scale_color_manual(values =  wes_palette("Darjeeling1")) +
+  scale_fill_manual(values =  wes_palette("Darjeeling1")) +
+  xlab("Prime condition") +
+  ylab("Yes response rate (Hit/False Alarm)") +
+  theme_classic()
+```
+
+
+# Latencies
+
+Our pre-registered secondary analysis was to look at the effect of naming latency on subsequent memory.
+During the analysis we also decided to look at the effect of button-press latency.
+Because latencies have skewed distribution they are usually log-transformed (like here).
+Scaling puts everything in a more similar scale which can help with convergence problems, so all latency measures are log-transformed and scaled.
+
+Here I log-transform and center all latency variables.
+
+```{r latency_transformation}
+# naming latency
+punctual$log_onset <- log(punctual$onset_ms)
+punctual$center_log_onset <- scale(punctual$log_onset, scale = FALSE)
+```
+
+Make sure that the logged and centered naming times have a more normal distribution
+
+```{r naming_latency_distribution}
+densityplot(punctual$log_onset)
+densityplot(punctual$center_log_onset)
+```
+
+
+# Memory ~ Naming latencies
+
+## Without naming condition
+This is our pre-registered secondary analysis looking at the effect of naming latency (aka processing time) on memory.
+So, the incomprehensible vs. distractor contrast and the latency measures all try to capture the same thing, but we thought that continuous factors, rather than categorical ones (like condition), would be better suited to account for variability.
+
+### Base model
+
+```{r lat_try1}
+MemLat.t1 <- glmer(response ~ 1 + center_log_onset +
+                            (1 + center_log_onset | Subject) +
+                            (1 + center_log_onset | Item),
+                          data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+summary(MemLat.t1)
+```
+
+This model shows that naming latency is a very good predictor of memory, such that the longer the naming latencies were, the better the memory for the named word (the estimate is quite large and positive).
+
+This model is reported in Table 4 of the article.
+
+### No intercept model
+
+```{r lat_no_intercept}
+MemLat.1 <- glmer(response ~ 0 + center_log_onset +
+                            (1 + center_log_onset | Subject) +
+                            (1 + center_log_onset | Item),
+                          data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(MemLat.1, MemLat.t1)
+```
+
+### No naming latency model
+
+```{r lat_no_nam_latency}
+MemLat.2 <- glmer(response ~ 1 + center_log_onset - center_log_onset +
+                            (1 + center_log_onset | Subject) +
+                            (1 + center_log_onset | Item),
+                          data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(MemLat.2, MemLat.t1)
+```
+
+### Confidence intervals
+
+```{r lat_CIs}
+confint(MemLat.t1, method = "profile")
+```
+Warnings (many): non-monotonic profile for .sig02unexpected decrease in profile: using minstep, Last two rows have identical or NA .zeta values: using minstep
+
+                  2.5 %    97.5 %
+.sig01            0.7048833 0.9286376
+.sig02           -1.0000000 1.0000000
+.sig03            0.0000000 1.0449195
+.sig04            0.8247278 1.2872450
+.sig05           -0.5883120 0.4250303
+.sig06            0.3621900 1.0524049
+(Intercept)       0.6923101 1.3173643
+center_log_onset  0.7114370 1.4095306
+
+## With naming condition
+
+Until now, we've seen that: naming condition predicts memory, naming condition predicts naming latency, and naming latency predicts naming condition. As such, it's unclear if the memory benefit we found is best explained as an effect of generation or an effect of procesing time. That is, perhaps the reason people remember the things they generated better is because generation (language production) is more time-consuming than (in this case) repetition and therefore the reason people remember generated items better has nothing to do with generation per-se but with the processing time generation requires. To address this issue, we use both naming condition and latency in an exploratory analysis of their effect on memory.
+
+### Base model
+
+This is the model reported in the article in Table 5.
+
+```{r LatCond_try2}
+LatCond.t2 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+summary(LatCond.t2)
+```
+
+What this model shows is that naming latency does explain most of the variance in the memory performance: the items that were named slowly were remembered better (large positive estimate of onset). However, there is an interesting interaction between the naming latency and the naming conditions. That is, memory only for items in the incomprehensible and distractor conditions improved with additional time; items in the identity condition were not remebered well regardless of how long people spent looking at them (center_log_onset:avu). Also, memory for items in the two generation conditions improved differently: items in the incomprehensible condition are not remembered as well as items in the distractor condition when they're named quickly, but are remembered better than items in the distractor condition when they're named slowly (center_log_onset:ivd).
+
+### No intercept model
+
+```{r LatCond_no_intercept}
+LatCond.1 <- glmer(response ~ 0 + center_log_onset * (avu + ivd) +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.1, LatCond.t2)
+```
+
+### No latency model
+
+```{r LatCond_no_latency}
+LatCond.2 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) - center_log_onset +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.2, LatCond.t2)
+```
+
+### No generation model
+
+```{r LatCond_no_generation}
+LatCond.3 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) - avu +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.3, LatCond.t2)
+```
+
+### No processing time model
+
+```{r LatCond_no_effort}
+LatCond.4 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) - ivd +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.4, LatCond.t2)
+```
+
+### No latency:avu
+
+```{r LatCond_no_namlat:generation}
+LatCond.5 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) - center_log_onset:avu +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.5, LatCond.t2)
+```
+
+### No latency:ivd model
+
+```{r LatCond_no_namlat:effort}
+LatCond.6 <- glmer(response ~ 1 + center_log_onset * (avu + ivd) - center_log_onset:ivd +
+                                (1 + center_log_onset | Subject) +
+                                (1 + center_log_onset | Item),
+                              data = punctual, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl=list(maxfun=20000)))
+
+anova(LatCond.6, LatCond.t2)
+```
+
+### Confidence intervals
+
+```{r LatCond_CIs}
+confint(LatCond.t2, method = "profile")
+```
+Warnings: non-monotonic profile for .sig02, non-monotonic profile for .sig05, bad spline fit for .sig02: falling back to linear interpolation
+
+                      2.5 %      97.5 %
+.sig01                0.670666727  0.89391122
+.sig02               -0.266880293  0.60748414
+.sig03                0.335118524  1.23801663
+.sig04                0.824217731  1.28910910
+.sig05               -0.521777675  0.46782214
+.sig06                0.426884183  1.15269074
+(Intercept)           0.572774602  1.20094623
+center_log_onset      0.835345415  1.72335378
+avu                  -0.177725011  0.33172250
+ivd                  -0.005657045  0.35152354
+center_log_onset:avu  1.509186748  3.12534527
+center_log_onset:ivd -1.343986875 -0.02157391
+
+### Plot
+
+This clarifies the more complex interaction patterns described above and appears in the text as Figure 2. It is the combination of two plots: 1) a line graph that shows how hit rates change as a function of time and split by naming (prime) condition and 2) two joyplots that show the density of correct and incorrect responses as a function of time and split by naming (prime) condition.
+
+```{r plot_mem_acc_lat}
+## the lineplot
+punctual$round_center_log <- round(punctual$center_log_onset, digits = 2)
+acc.bytime <- punctual %>%
+  group_by(Naming, round_center_log) %>%
+  summarise(acc = mean(correct)) %>%
+  rename(Prime = Naming)
+
+lineplot <-
+  ggplot(acc.bytime,  
+  aes(x=round_center_log,y=acc,color=Prime)) +
+  geom_smooth(method = lm) +
+  scale_y_continuous(limits=c(0.0, 1.0)) +
+  scale_colour_manual(breaks = c("identity", "incomprehensible", "distractor"),
+                      labels = c("Identity", "Backward", "Unrelated"),
+                      values =  wes_palette("Darjeeling1")) +
+  xlab("Naming latency (log centred ms)") +
+  ylab("Hit rates") +
+  annotate("text", x=-0.65, y=0, label= "Incorrect") + 
+  annotate("text", x=-0.65, y=1, label= "Correct")
+
+## the joyplot
+# first make "correct" a factor and give the levels more meaningful names
+punctual <- punctual %>%
+  rename(Prime = Naming) %>%
+  mutate(correct_factor = as.factor(correct)) %>%
+  mutate(correct_factor = recode_factor(correct_factor,
+                                        '1'="Correct",
+                                        '0'="Incorrect"))
+
+joyplot <-
+ggplot(punctual, aes(x=center_log_onset, y=Prime, fill=Prime)) +
+  geom_density_ridges(quantile_lines = TRUE) +
+  scale_fill_manual(breaks = c("identity", "incomprehensible", "distractor"),
+                    labels=c("Identity", "Backward", "Unrelated"),
+                    values =  wes_palette("Darjeeling1")) +
+  theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  xlab("Naming latency (log centred ms)") +
+  facet_grid(correct_factor ~ .)
+
+## combine the plots
+fig2 <- ggarrange(lineplot, joyplot,
+          ncol = 2, nrow = 1,
+          hjust = c(-0.5, 0.5),
+          labels = "AUTO",
+          legend = "bottom",
+          common.legend = T)
+
+fig2
+```

@@ -1,0 +1,409 @@
+---
+title: "Behavioural dataset"
+author: "Eirini Zormpa"
+date: "14/08/2018"
+output:
+  html_document:
+    theme: "flatly"
+---
+
+# Description
+This script puts together the behavioural data collected during the study phase (picture naming task) and test phase (Yes/No recognition memory task) of this experiment using three sources:
+
+- naming accuracy logfiles (study phase),
+- annotated naming times from recordings (study phase), and
+- memory accuracy (test phase)
+
+The judgement of correct or incorrect naming in (1) was coded manually by me (Eirini Zormpa) by listening to the audio and comparing the word used by the participant to the word that we expected to be used. The only trials coded as "correct" in the picture naming task were the trials in which participants named the picture with the same word that was later presented in the naming task. That is, synonyms were coded as incorrect responses.
+
+First I join the create a dataset from the study phase, then one from the test phase, and then join them both.
+
+Note that certain names differ between here and the article text. Some of the conditions have been renamed to more accurately reflect the manipulation used:
+
+1. the conditions may be referred to as `naming conditions` here but are called `prime conditions` in the text
+2. the `incomprehensible` condition has been renamed to `backward` condition in the article -- the prime played before the picture was backward speech
+3. the `distractor` condition has been renamed to `unrelated` condition in the article -- the prime played before the picture in this case was a word phonologically and semantically unrelated to the target
+
+```{r load-packages, message=FALSE}
+# in case any of the following packages are not installed
+# install.packages("rio")
+# install.packages("dplyr")
+# install.packages("tidyr")
+# install.packages("stringr)
+# install.packages("ggplot2")
+# install.packages("ggridges")
+
+library(rio)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(ggridges)
+```
+
+
+# Study phase
+
+## Accuracy
+
+First I read in the (Presentation) logfiles from the picture naming experiment, which include naming accuracy for each trial for each participant.
+
+```{r read-naming-accuracy-data}
+naming_accuracy <- rio::import("https://osf.io/28kg3/download", "rds")
+```
+
+There are two columns where which code accuracy:
+
+- in `CorrectName`,
+  - `1` signifies a *correct response* and
+  - `0` signifies an *incorrect response*
+- in `NameResponse` (used towards the end of the script):
+    - `2` signifies that a synonym was used,
+    - `3` that an incorrect word was used,
+    - `4` that this name is repeated somewhere else in the naming task (in this case both trials get this response),
+    - `5` signifies hesitation or stuttering (where people start talking and change their mind etc.) and
+    - `0` signifies an "I don't know" or skipping response.
+    
+All of there responses except for `5` are **incorrect** and thus are coded as `0` in the `CorrectName` column.
+
+```{r clean-naming-accuracy-data}
+naming_accuracy <- rename(naming_accuracy, CorrectName = Correct, NameResponse = Response) %>%
+  # this is when participants pushed the "Enter" button to move to the next trial
+  rename(Button_RT = RT) %>%
+  # columns leftovers from stimuli making. They were never actually used for anything so no reason to keep them
+  select(-c(Category, Category_agreement))
+
+# fix typo
+naming_accuracy$Identifier <- as.character(naming_accuracy$Identifier)
+naming_accuracy$Identifier[naming_accuracy$Identifier == "11684"] <- "116084"
+naming_accuracy$Identifier <- as.integer(naming_accuracy$Identifier)
+
+str(naming_accuracy)
+
+```
+```{r naming-accuracy-data-descriptives}
+nam_acc_bySub <- summarise(group_by(naming_accuracy, Subject),
+                     acc = mean(CorrectName))
+
+min_nam_acc_bySubject <- min(nam_acc_bySub$acc)
+
+max_nam_acc_bySubject <- max(nam_acc_bySub$acc)
+
+nam_acc <- summarise(naming_accuracy,
+                     mean_nam_acc = mean(CorrectName),
+                     sd_nam_acc = sd(CorrectName))
+```
+Overall, participants did really well in the naming task (range: `r min_nam_acc_bySubject` - `r max_nam_acc_bySubject`.
+This is good, because interpreting participants' memory responses in trials where they got the name wrong is impossible.
+Next, I exclude those trials.
+
+```{r keep-correct-responses}
+naming_correct <- naming_accuracy %>%
+  filter(CorrectName == 1)
+```
+
+
+## Latencies
+
+Next up I deal with the latency data.
+These were (semi)manually annotated on Praat.
+The onsets were output in seconds (not milliseconds), so I transform them to milliseconds here.
+
+```{r read-naming-latency-data}
+latency <- import("https://osf.io/mb9ts/download", "txt")
+
+latency <- latency %>%
+  mutate(onset_ms = onset*1000) %>%
+  separate("Subj+Trial", into=c("Subject", "Dutch", "Naming"), sep = "_") %>%
+  # Participants 5 and 39 are two of the participants who did not complete the memory task so their data cannot be used. the naming data was not imported for them but, but their responses were annotated on the day of the naming experiment; I did not yet know they would not complete the second part
+  filter(Subject != "AJjr05") %>%
+  filter(Subject != "AJjr39")
+
+str(latency)
+
+# these are just empty so I get rid of them
+latency <- latency %>%
+  select(-c(V5, V6, V7)) %>%
+  drop_na(Dutch)
+```
+
+
+the Praat script that makes this file from the annotations creates three rows per trial, because there are three sections in the annotations:
+
+1. the first part contains the condition name, taken from the name of the file that is being annotated
+2. the second contains the word the participants were expected to use to name the picture. This was also taken from the name of the annotated file.
+3. the third part contains the word that participants actually said or `DK` if the participant said they didn't know what the picture depicted
+
+The code below gets rid of the first and third parts, keeping only the second:
+
+```{r clean-naming-latency-data}
+latency <- latency %>%
+  filter(as.character(label) == as.character(Dutch)) %>%
+  select(-label)
+```
+
+I finally join all naming datasets:
+
+```{r join-all-naming-data, warning=FALSE}
+# you'll get warnings about factors being coerced into character vectors here, that is okay
+naming <- inner_join(naming_correct, latency, by = c("Subject", "Dutch", "Naming")) %>%
+  select(Subject, NameTrial, Identifier, Probe, Naming, Code_i, List, Dutch, Button_RT, CorrectName, NameResponse, onset_ms)
+```
+
+
+# Test phase
+
+The last dataset that needs to be added contains the memory data.
+These were collected online a day after the study phase on LimeSurvey.
+These are already tidied up a fair amount.
+
+```{r read-memory-data}
+test_phase <- rio::import("https://osf.io/3mxpu/download", "rds")
+```
+
+Adding a lot of information about the trials was difficult on LimeSurvey, so I combined a lot of that in the `Identifier` column.
+As a result, this column is not very readable, so I make this information more explicit.
+
+This is an explanation of what the `Identifier` digits mean:
+
+- 1..... or 2..... : Target or Foil (Probe)
+- .1.... or .2.... or .3.... or .0...: Identity, Incomprehensible (renamed to "Backward" in the article), or Distractor (renamed to "Unrelated" in the article) (Naming/Prime condition) or NA (for Foils)
+- ..1... - ..6...: List 1-6
+- ...001 - ...246: Item number 1-246
+
+```{r translate-identifier}
+# Probe
+test_phase <- test_phase %>% mutate(Probe = Identifier)
+test_phase$Probe <- substr(test_phase$Probe, 1, 1)
+
+# create a column with expected button
+test_phase <- test_phase %>% mutate(expected.button = (as.numeric(Probe)-2)*(-1))
+
+test_phase$Probe[test_phase$Probe == "1"] <- "Target"
+test_phase$Probe[test_phase$Probe == "2"] <- "Foil"
+
+# Naming condition (renamed to "Prime" condition in the article)
+test_phase <- test_phase %>% mutate(Naming = Identifier)
+test_phase$Naming <- substr(test_phase$Naming, 2, 2)
+test_phase$Naming[test_phase$Naming == "1"] <- "identity"
+test_phase$Naming[test_phase$Naming == "2"] <- "incomprehensible"
+test_phase$Naming[test_phase$Naming == "3"] <- "distractor"
+test_phase$Naming[test_phase$Naming == "0"] <- "NA"
+
+# List
+test_phase <- test_phase %>% mutate(List = Identifier)
+test_phase$List <- substr(test_phase$List, 3, 3)
+
+# Item
+test_phase <- test_phase %>% mutate(Item = Identifier)
+test_phase$Item <- substr(test_phase$Item, 4, 7)
+
+# Accuracy
+test_phase <- test_phase %>% mutate(correct = 1)
+test_phase$correct[test_phase$expected.button != test_phase$response] = 0
+
+# Without this the datasets don't join properly in the next step because "Identifier" is character in memory dataset and integer in naming dataset
+test_phase$Identifier=as.numeric(as.character(test_phase$Identifier))
+test_phase$List=as.numeric(as.character(test_phase$List))
+```
+
+# Join datasets
+
+At this point, I have a naming dataset (which contains information about how the targets were named) and a memory dataset, which contains information about how participants performed in the memory task on *all* the items (targets and foils). Note that, in the memory dataset, I need to get rid of the targets that had been named incorrectly.
+
+To do this, I:
+
+1. split the memory dataset into target and foils,
+2. remove the trials in which a participant used the name of a foil (from the test phase) to name another picture (in the study phase). These were noted manually during annotation in a separate file.
+3. join the naming targets with the memory targets to filter out the incorrectly named trials,
+4. check if I need to exclude any participants, and
+5. join the foils to the target dataset
+
+```{r split-targets-foils}
+memory_targets <- test_phase %>% filter(Probe == "Target")
+foils <- test_phase %>% filter(Probe == "Foil")
+
+# keeping useful columns only
+memory_targets <- select(memory_targets, Subject, Identifier, Probe, Naming, List, Item, Dutch, correct, response)
+foils <- select(foils, Subject, Identifier, Probe, Naming, List, Item, Dutch, correct, response)
+
+# import the file with notes on repeated words
+repetitions <- import("https://osf.io/nzphs/download", "xlsx")
+
+repetitions <- repetitions %>%
+  select(Subject, Item, Rep_memory) %>%
+  rename(Dutch = Item) %>%
+  filter(Rep_memory == "x") %>%
+  select(-Rep_memory)
+
+# keep only the words that were not repeated
+memory_targets_clean <- anti_join(memory_targets, repetitions, by = c("Subject", "Dutch"))
+# join targets from naming and memory
+targets <- inner_join(naming, memory_targets_clean, by = c("Subject", "Identifier", "Probe", "Naming", "List", "Dutch"))
+
+targets <- select(targets, -Code_i)
+targets$Item <- as.factor(targets$Item)
+```
+## Check hit rates
+
+At this point, I take a look at the hit rates to make sure everything looks okay.
+
+```{r check-hits}
+hit.sub <- summarise(group_by(targets, Subject),
+                     hits = mean(correct))
+
+ggplot(hit.sub)+
+  geom_vline(xintercept = 0.5) +
+  geom_point(aes(x=hits, y = Subject))
+```
+Participants not performing well in the memory task is generally not a reason for exclusion.
+However, participant AJjr15 is performing surprisingly below chance, to the point that they may have misunderstood the matching between key press and response, so I remove them.
+
+```{r exclude-participant-hits}
+ggplot() +
+  geom_histogram(aes(x=hits), binwidth = .03, data = hit.sub)
+
+# Exclude AJjr15
+targets <- filter(targets, Subject != "AJjr15")
+```
+
+Then I check if participants are exhibiting the predicted pattern in their by-condition responses (identity < incomprehensible < distractor).
+
+```{r acccuracy-by-condition}
+# It helps if levels are ordered by difficulty -- ordered alphabetically by default
+targets$Subject <- as.factor(targets$Subject)
+targets$Naming <- as.factor(targets$Naming)
+targets$Naming = factor(targets$Naming, levels(targets$Naming)[c(2,3,1)])
+
+# check Hit rates by subject by condition
+hits.sub.nam <- summarise(group_by(targets, Subject, Naming),
+                              hits = mean(correct))
+
+ggplot(hits.sub.nam)+
+  geom_vline(xintercept = 0.5) +
+  geom_point(aes(x=hits, y = Naming)) +
+  facet_wrap(~Subject)
+
+hits.nam <- targets %>%
+  group_by(Naming) %>%
+  summarise(hits = mean(correct))
+```
+Most participants do show the worst memory performance for the `identity` condition, as expected, but there are some participants who actually perform the best in the `identity` condition!
+
+## Check button-press latencies
+
+I then take a look at participants' button-press latencies.
+These were the button presses that participants made to terminate a naming trial in the study phase.
+
+```{r check-button-presses}
+button_lat <- targets %>% group_by(Naming) %>%
+  summarise(mean_button_lat = mean(Button_RT))
+
+button_sub_lat <- targets %>% group_by(Naming, Subject) %>%
+  summarise(mean_button_lat = mean(Button_RT)) %>%
+  arrange(desc(mean_button_lat))
+
+# there appear to be outliers in the identity condition
+ggplot() +
+  geom_violin(aes(x=Naming,y=Button_RT, fill=Naming),linetype = 1, size =0.1, data = targets) +
+  geom_point(aes(x=Naming,y=mean_button_lat), data = button_lat)+
+  scale_fill_brewer(palette = "YlGnBu")
+
+# visual inspection shows these participants to be on the slow end
+AJjr16 <- filter(targets, Subject == "AJjr16")
+AJjr31 <- filter(targets, Subject == "AJjr31")
+AJjr43 <- filter(targets, Subject == "AJjr43")
+
+# all of these have some pretty slow responses, but in the end we did not exclude any
+ggplot() +
+  geom_histogram(aes(x=Button_RT), data = AJjr16)
+
+ggplot() +
+  geom_histogram(aes(x=Button_RT), data = AJjr31)
+
+ggplot() +
+  geom_histogram(aes(x=Button_RT), data = AJjr43)
+```
+
+## Check naming onsets
+
+Finally, I check the naming latencies in the study phase.
+Because I use naming latencies as a predictor in the main analysis, I want to only include trials in which participants answered fluently.
+In cases where participants stuttered etc., the naming latency seems a little less reliable as a measure.
+
+```{r check-naming-latencies}
+# first, only keep trials in which participants made a fluent correct response (coded as 1)
+punctual <- filter(targets, NameResponse == 1)
+
+# how many trials are excluded because participants stuttered etc.
+# all the incorrect naming trials were removed early on in this script: the only correct answers allowed were the ones with NameResponse values of 1 and 5
+all <- nrow(targets)
+late <- nrow(filter(targets, NameResponse == 5))
+late_perc <- late/all
+
+punctual$Subject <- as.factor(punctual$Subject)
+
+lat.sub.nam <- summarise(group_by(punctual, Subject, Naming),
+                         mean.RT = mean(onset_ms))
+
+lat.nam <- summarise(group_by(punctual, Naming),
+                         mean.RT = mean(onset_ms))
+
+#violin
+ggplot() +
+  geom_violin(aes(x=Naming,y=onset_ms, fill=Naming),linetype = 1, size =0.1, data = punctual) +
+  geom_point(aes(x=Naming,y=mean.RT), data = lat.nam)+
+  scale_fill_brewer(palette = "YlGnBu")
+
+#joyplot
+ggplot(punctual,aes(x=onset_ms,y=Naming,fill=..x..))+
+  geom_density_ridges_gradient() +
+  theme_ridges()
+```
+
+After all this, I add in the foils
+I start by removing participant AJjr15, who was removed from the targets dataset but not the foils dataset.
+
+```{r join_all}
+all <- full_join(targets, foils, by = c("Subject", "Identifier", "Probe", "Naming", "List", "Dutch", "Item", "correct", "response")) %>%
+  filter(Subject != "AJjr15")
+
+all$Subject <- as.factor(all$Subject)
+all$Item <- as.factor(all$Item)
+```
+
+## Calculate overall memory accuracy
+
+```{r memory-accuracy}
+acc_sub <- summarise(group_by(all, Subject),
+                     acc = mean(correct))
+
+acc_mem <- all %>% summarise(acc_m = mean(correct),
+                                acc_sd = sd(correct))
+
+ggplot(acc_sub)+
+  geom_vline(xintercept = 0.5) +
+  geom_point(aes(x=acc, y = Subject))
+
+ggplot() +
+  geom_histogram(aes(x=acc), binwidth = .03, data = acc_sub)
+
+# ordered by difficulty
+all$Naming <- as.factor(all$Naming)
+all$Naming = factor(all$Naming, levels(all$Naming)[c(2,3,1)])
+
+# check accuracy by subject by condition
+acc_sub_nam <- summarise(group_by(all, Subject, Naming),
+                          acc = mean(correct))
+
+ggplot(acc_sub_nam)+
+  geom_vline(xintercept = 0.5) +
+  geom_point(aes(x=acc, y = Naming)) +
+  facet_wrap(~Subject)
+
+# check accuracy by condition
+acc_nam <- all %>% group_by(Naming) %>% summarise(acc = mean(correct))
+
+ggplot() +
+  geom_point(aes(x=Naming,y=acc), data = acc_nam)
+```
